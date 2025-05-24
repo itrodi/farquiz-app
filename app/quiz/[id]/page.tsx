@@ -7,76 +7,8 @@ import { ListQuiz } from "@/components/quiz-types/list-quiz"
 import { MapQuiz } from "@/components/quiz-types/map-quiz"
 import { ImageFillQuiz } from "@/components/quiz-types/image-fill-quiz"
 import { MixedQuiz } from "@/components/quiz-types/mixed-quiz"
-import type { Metadata, ResolvingMetadata } from 'next';
 
 export const dynamic = "force-dynamic"
-
-type Props = {
-  params: { id: string };
-  searchParams: { [key: string]: string | string[] | undefined };
-};
-
-export async function generateMetadata(
-  { params, searchParams }: Props,
-  parent: ResolvingMetadata
-): Promise<Metadata> {
-  const supabase = createClient();
-  const quizId = params.id;
-
-  const { data: quiz, error } = await supabase
-    .from("quizzes")
-    .select("title, categories(name), difficulty, time_limit")
-    .eq("id", quizId)
-    .single();
-
-  if (error || !quiz) {
-    // Optionally return default metadata or handle error
-    console.error("Error fetching quiz for metadata:", error);
-    return {
-      title: "Quiz not found",
-      // other default tags
-    };
-  }
-
-  const title = quiz.title || "FarQuiz";
-  const category = quiz.categories?.name || "General";
-  const time = quiz.time_limit ? `${quiz.time_limit} seconds` : "Not timed";
-  const difficulty = quiz.difficulty || "Any";
-
-  // Construct the URL for the dynamic OG image
-  const ogImageUrl = new URL(`${process.env.NEXT_PUBLIC_APP_URL || "https://farquizapp.vercel.app"}/api/og/quiz-image`);
-  ogImageUrl.searchParams.set("title", title);
-  ogImageUrl.searchParams.set("category", category);
-  ogImageUrl.searchParams.set("time", time);
-  ogImageUrl.searchParams.set("difficulty", difficulty);
-
-  const frameMetadata = {
-    version: "next",
-    imageUrl: ogImageUrl.toString(),
-    button: {
-      title: "Play Now",
-      action: {
-        type: "launch_frame",
-        name: "FarQuiz",
-        url: `${process.env.NEXT_PUBLIC_APP_URL || "https://farquizapp.vercel.app"}/quiz/${quizId}`,
-        splashImageUrl: process.env.NEXT_PUBLIC_SPLASH_IMAGE_URL || "https://lqy3lriiybxcejon.public.blob.vercel-storage.com/RBv8coHVCER8/farquiz_splash-h61l64V89HzQsrn3v0Ey1RJGCVtPvq.png?Ik5m",
-        splashBackgroundColor: process.env.NEXT_PUBLIC_SPLASH_BG_COLOR || "#8B5CF6",
-      },
-    },
-  };
-
-  return {
-    title: title,
-    description: `Take the ${title} quiz on FarQuiz!`,
-    other: {
-      "fc:frame": JSON.stringify(frameMetadata),
-      // You might want to add standard Open Graph tags here too for other platforms
-      "og:title": title,
-      "og:description": `Take the ${title} quiz on FarQuiz!`,
-      "og:image": ogImageUrl.toString(),
-    },
-  };
-}
 
 export default async function QuizPage({ params }: { params: { id: string } }) {
   const supabase = createClient()

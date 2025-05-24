@@ -1,82 +1,113 @@
-"use client"
-
-import { useState } from "react"
-import { createClient } from "@/lib/supabase/client"
+import { createClient } from "@/lib/supabase/server"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Clock, Users, BarChart2, Award, Calendar, Tag, Trophy, UserPlus } from "lucide-react"
 import Image from "next/image"
-import { UserSearchModal } from "@/components/user-search-modal"
-import { useAuth } from "@/contexts/auth-kit-context"
+import type { Metadata, ResolvingMetadata } from 'next'
+import { notFound } from "next/navigation"
 
-export default function QuizPreviewPage({ params }: { params: { id: string } }) {
-  const [quiz, setQuiz] = useState<any>(null)
-  const [questionsCount, setQuestionsCount] = useState<number | null>(null)
-  const [topScores, setTopScores] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [showChallengeModal, setShowChallengeModal] = useState(false)
+type Props = {
+  params: { id: string }
+  searchParams: { [key: string]: string | string[] | undefined }
+}
+
+export async function generateMetadata(
+  { params }: Props,
+  parent: ResolvingMetadata
+): Promise<Metadata> {
   const supabase = createClient()
-  const router = useRouter()
-  const { isAuthenticated } = useAuth()
+  const quizId = params.id
 
-  useState(() => {
-    const fetchQuizData = async () => {
-      setLoading(true)
-      try {
-        // Fetch quiz data
-        const { data: quizData, error: quizError } = await supabase
-          .from("quizzes")
-          .select(`
-            *,
-            categories(*),
-            profiles(username, display_name, avatar_url)
-          `)
-          .eq("id", params.id)
-          .single()
+  const { data: quiz, error } = await supabase
+    .from("quizzes")
+    .select("title, categories(name), difficulty, time_limit, description, emoji")
+    .eq("id", quizId)
+    .single()
 
-        if (quizError) throw quizError
-        setQuiz(quizData)
-
-        // Fetch questions count
-        const { count, error: countError } = await supabase
-          .from("questions")
-          .select("*", { count: "exact", head: true })
-          .eq("quiz_id", params.id)
-
-        if (!countError) {
-          setQuestionsCount(count)
-        }
-
-        // Fetch top scores
-        const { data: scoresData, error: scoresError } = await supabase
-          .from("user_scores")
-          .select(`
-            score, 
-            percentage,
-            profiles(username, display_name, avatar_url)
-          `)
-          .eq("quiz_id", params.id)
-          .order("percentage", { ascending: false })
-          .limit(5)
-
-        if (!scoresError) {
-          setTopScores(scoresData || [])
-        }
-      } catch (error: any) {
-        console.error("Error fetching quiz:", error)
-        setError(error.message)
-      } finally {
-        setLoading(false)
-      }
+  if (error || !quiz) {
+    console.error("Error fetching quiz for metadata:", error)
+    return {
+      title: "Quiz Preview Not Found",
     }
+  }
 
-    fetchQuizData()
-  }, [params.id])
+  const title = quiz.title || "FarQuiz Preview"
+  const category = quiz.categories?.name || "General"
+  const time = quiz.time_limit ? `${quiz.time_limit} seconds` : "Not timed"
+  const difficulty = quiz.difficulty || "Any"
 
-  // Format date
+  const ogImageUrl = new URL(`${process.env.NEXT_PUBLIC_APP_URL || "https://farquizapp.vercel.app"}/api/og/quiz-image`)
+  ogImageUrl.searchParams.set("title", title)
+  ogImageUrl.searchParams.set("category", category)
+  ogImageUrl.searchParams.set("time", time)
+  ogImageUrl.searchParams.set("difficulty", difficulty)
+
+  const frameMetadata = {
+    version: "next",
+    imageUrl: ogImageUrl.toString(),
+    button: {
+      title: "Play Now",
+      action: {
+        type: "launch_frame",
+        name: "FarQuiz",
+        url: `${process.env.NEXT_PUBLIC_APP_URL || "https://farquizapp.vercel.app"}/quiz/${quizId}`,
+        splashImageUrl: process.env.NEXT_PUBLIC_SPLASH_IMAGE_URL || "https://lqy3lriiybxcejon.public.blob.vercel-storage.com/RBv8coHVCER8/farquiz_splash-h61l64V89HzQsrn3v0Ey1RJGCVtPvq.png?Ik5m",
+        splashBackgroundColor: process.env.NEXT_PUBLIC_SPLASH_BG_COLOR || "#8B5CF6",
+      },
+    },
+  }
+
+  return {
+    title: `${title} - Preview`,
+    description: quiz.description || `Preview for ${title} on FarQuiz.`,
+    other: {
+      "fc:frame": JSON.stringify(frameMetadata),
+      "og:title": `${title} - Preview`,
+      "og:description": quiz.description || `Preview for ${title} on FarQuiz.`,
+      "og:image": ogImageUrl.toString(),
+    },
+  }
+}
+
+export default async function QuizPreviewPage({ params }: { params: { id: string } }) {
+  const supabase = createClient()
+
+  const { data: quiz, error: quizError } = await supabase
+    .from("quizzes")
+    .select(`
+      *,
+      categories(*),
+      profiles(username, display_name, avatar_url)
+    `)
+    .eq("id", params.id)
+    .single()
+
+  if (quizError || !quiz) {
+    console.error("Error fetching quiz data for page:", quizError)
+    notFound()
+  }
+
+  const { count: questionsCount, error: countError } = await supabase
+    .from("questions")
+    .select("*", { count: "exact", head: true })
+    .eq("quiz_id", params.id)
+
+  const { data: topScores, error: scoresError } = await supabase
+    .from("user_scores")
+    .select(`
+      score, 
+      percentage,
+      profiles(username, display_name, avatar_url)
+    `)
+    .eq("quiz_id", params.id)
+    .order("percentage", { ascending: false })
+    .limit(5)
+
+  const safeTopScores = topScores || []
+
   const formatDate = (dateString: string) => {
+    if (!dateString) return 'N/A'
     const date = new Date(dateString)
     return new Intl.DateTimeFormat("en-US", {
       year: "numeric",
@@ -85,32 +116,9 @@ export default function QuizPreviewPage({ params }: { params: { id: string } }) 
     }).format(date)
   }
 
-  if (loading) {
-    return (
-      <div className="container flex justify-center items-center min-h-[60vh]">
-        <div className="animate-spin h-8 w-8 border-4 border-purple-500 rounded-full border-t-transparent"></div>
-      </div>
-    )
-  }
-
-  if (error || !quiz) {
-    return (
-      <div className="container flex justify-center items-center min-h-[60vh]">
-        <div className="text-center">
-          <h2 className="text-xl font-bold mb-2">Quiz not found</h2>
-          <p className="text-gray-400 mb-4">{error || "The quiz you're looking for doesn't exist."}</p>
-          <Button asChild>
-            <Link href="/explore">Browse Quizzes</Link>
-          </Button>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="container max-w-4xl mx-auto px-4 py-8">
       <div className="bg-slate-800 rounded-lg overflow-hidden shadow-lg">
-        {/* Quiz Header */}
         <div className="bg-gradient-to-r from-purple-600 to-blue-600 p-6">
           <div className="flex items-center gap-4">
             <div className="bg-white/20 rounded-full p-4 backdrop-blur-sm">
@@ -123,7 +131,6 @@ export default function QuizPreviewPage({ params }: { params: { id: string } }) 
           </div>
         </div>
 
-        {/* Quiz Details */}
         <div className="p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
@@ -152,7 +159,7 @@ export default function QuizPreviewPage({ params }: { params: { id: string } }) 
                 <div className="flex items-center gap-2 text-gray-300">
                   <BarChart2 className="h-5 w-5 text-blue-400" />
                   <span>Questions:</span>
-                  <span>{questionsCount || "Unknown"}</span>
+                  <span>{questionsCount ?? "Unknown"}</span>
                 </div>
 
                 <div className="flex items-center gap-2 text-gray-300">
@@ -180,7 +187,7 @@ export default function QuizPreviewPage({ params }: { params: { id: string } }) 
                 <div className="mt-4">
                   <h3 className="text-sm font-medium text-gray-400 mb-2">Tags</h3>
                   <div className="flex flex-wrap gap-2">
-                    {quiz.tags.map((tag: string) => (
+                    {(quiz.tags as string[]).map((tag: string) => (
                       <span key={tag} className="bg-slate-700 px-2 py-1 rounded-full text-xs">
                         {tag}
                       </span>
@@ -191,12 +198,12 @@ export default function QuizPreviewPage({ params }: { params: { id: string } }) 
             </div>
 
             <div>
-              {topScores && topScores.length > 0 ? (
+              {safeTopScores && safeTopScores.length > 0 ? (
                 <div>
                   <h2 className="text-xl font-semibold mb-4">Top Scores</h2>
                   <div className="bg-slate-700 rounded-lg overflow-hidden">
                     <div className="p-4 space-y-3">
-                      {topScores.map((score, index) => (
+                      {safeTopScores.map((score, index) => (
                         <div key={index} className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
                             <div className="bg-slate-600 h-8 w-8 rounded-full flex items-center justify-center text-sm font-bold">
@@ -206,7 +213,7 @@ export default function QuizPreviewPage({ params }: { params: { id: string } }) 
                               {score.profiles?.avatar_url ? (
                                 <Image
                                   src={score.profiles.avatar_url || "/placeholder.svg"}
-                                  alt={score.profiles.display_name || "User"}
+                                  alt={score.profiles.display_name || score.profiles.username || "User"}
                                   width={24}
                                   height={24}
                                   className="rounded-full"
@@ -237,24 +244,9 @@ export default function QuizPreviewPage({ params }: { params: { id: string } }) 
             <Button asChild size="lg" className="px-8">
               <Link href={`/quiz/${params.id}`}>Start Quiz</Link>
             </Button>
-
-            {isAuthenticated && (
-              <Button variant="outline" size="lg" className="px-8" onClick={() => setShowChallengeModal(true)}>
-                <UserPlus className="mr-2 h-5 w-5" />
-                Challenge Friend
-              </Button>
-            )}
           </div>
         </div>
       </div>
-
-      {/* Challenge Modal */}
-      <UserSearchModal
-        isOpen={showChallengeModal}
-        onClose={() => setShowChallengeModal(false)}
-        quizId={params.id}
-        quizTitle={quiz.title}
-      />
     </div>
   )
 }
